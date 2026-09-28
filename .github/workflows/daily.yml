@@ -38,6 +38,5 @@ jobs:
             git diff --quiet --cached || git commit -m "Update sent.json [skip ci]"
             git push
           else
-            echo "sent.json topilmadi, post yuborilmagan bo'lishi mumkin — o'tkazib yuborildi"
+            echo "sent.json topilmadi (post yuborilmagan bo'lishi mumkin) — o'tkazib yuborildi"
           fi
- 
