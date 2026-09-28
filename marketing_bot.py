@@ -30,7 +30,7 @@ MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
 AUTHOR_NAME = os.environ.get("AUTHOR_NAME", "Muhammadjon")
 
 HOURS_WINDOW = 30           # so'nggi necha soatlik maqolalarni ko'rib chiqamiz
-MAX_CANDIDATES_TO_AI = 25   # Claude'ga yuboriladigan maksimal maqolalar soni
+MAX_CANDIDATES_TO_AI = 35   # Claude'ga yuboriladigan maksimal maqolalar soni
 DUP_TITLE_THRESHOLD = 0.72  # sarlavha o'xshashligi bo'yicha dublikat chegarasi
 SENT_FILE = "sent.json"
 
@@ -39,7 +39,7 @@ SENT_FILE = "sent.json"
 #    Og'irlik — manba nufuzi, muhimlik bahosida yordam beradi (1=oddiy, 3=yirik).
 # ---------------------------------------------------------------------------
 FEEDS = [
-    # --- Xalqaro (inglizcha) ---
+    # --- 📰 Marketing ---
     ("Marketing Dive", "https://www.marketingdive.com/feeds/news/", 3),
     ("Search Engine Journal", "https://www.searchenginejournal.com/feed/", 2),
     ("Social Media Today", "https://www.socialmediatoday.com/feeds/news/", 2),
@@ -47,17 +47,38 @@ FEEDS = [
     ("Content Marketing Institute", "https://contentmarketinginstitute.com/feed/", 2),
     ("Marketing Week", "https://www.marketingweek.com/feed/", 3),
     ("MarTech", "https://martech.org/feed/", 2),
-    ("Adweek", "https://www.adweek.com/feed/", 2),
+    ("Adweek", "https://www.adweek.com/feed/", 3),
+    ("The Drum", "https://www.thedrum.com/rss", 3),
+    ("Campaign", "https://www.campaignlive.co.uk/rss", 2),
+
+    # --- 🤖 AI / Tech ---
+    ("TechCrunch", "https://techcrunch.com/feed/", 3),
+    ("The Verge", "https://www.theverge.com/rss/index.xml", 3),
+    ("OpenAI Blog", "https://openai.com/blog/rss.xml", 3),
+    ("Google Blog", "https://blog.google/rss/", 3),
+    ("Meta Newsroom", "https://about.fb.com/news/feed/", 3),
+
+    # --- 📱 Social Media (rasmiy bloglar) ---
+    ("YouTube Blog", "https://blog.youtube/rss/", 2),
+    ("LinkedIn Blog", "https://www.linkedin.com/blog/member/feed", 2),
+
+    # --- 📈 Business / Brands ---
+    ("Forbes", "https://www.forbes.com/business/feed/", 3),
+    ("CNBC", "https://www.cnbc.com/id/10000664/device/rss/rss.html", 3),
+
     # --- Rus tilida (MDH bozori uchun foydali) ---
     ("Cossa", "https://www.cossa.ru/rss/", 3),
     ("Sostav.ru", "https://www.sostav.ru/rss/news.xml", 2),
     ("AdIndex", "https://adindex.ru/rss.xml", 2),
     ("VC.ru", "https://vc.ru/rss/all", 2),
 ]
-# ESLATMA: rus manbalaridan ba'zilarining RSS manzili vaqti-vaqti bilan
-# o'zgarishi mumkin. Agar bot logida "Feed xato" ko'rinsa, o'sha manbani
-# saytdan yangi RSS havolasi bilan almashtiring yoki ro'yxatdan olib tashlang
-# — qolgan manbalar baribir ishlashda davom etadi.
+# ESLATMA: ba'zi manbalarning (ayniqsa TikTok/Instagram kabi ijtimoiy
+# tarmoqlarning) rasmiy, barqaror RSS'i umuman yo'q — ular yangiliklarni
+# faqat ilova yoki matbuot xabarlari orqali e'lon qiladi, shuning uchun
+# ro'yxatga qo'shilmadi. Yuqoridagi ba'zi linklar ham vaqti-vaqti bilan
+# o'zgarishi mumkin. Bot logida "Feed xato" ko'rinsa, o'sha manbani saytdan
+# yangi RSS havolasi bilan almashtiring yoki ro'yxatdan olib tashlang —
+# qolgan manbalar baribir ishlashda davom etadi.
 
 CATEGORY_EMOJI = {
     "smm": "📱",
@@ -234,11 +255,21 @@ def rank_candidates(items):
         for i, x in enumerate(items)
     )
     prompt = (
-        "Quyida so'nggi marketing yangiliklari ro'yxati. Vazifang:\n"
-        "1. Faqat MARKETING, REKLAMA, SMM, SEO, BREND, E-COMMERCE mavzusiga oid "
-        "bo'lganlarini qoldir (aloqasizlarini chiqarib tashla).\n"
-        "2. Har biriga 1-10 ball ber, mezonlar: ta'sir doirasi, amaliylik, "
-        "yangilik darajasi, manba nufuzi, O'zbekiston/MDH bozoriga aloqadorlik.\n"
+        "Quyida so'nggi marketing, AI/tech va biznes yangiliklari ro'yxati. Vazifang:\n"
+        "1. MARKETING, REKLAMA, SMM, SEO, BREND, E-COMMERCE mavzusiga oid bo'lganlarini, "
+        "shuningdek marketologlar va biznes egalariga bevosita daxldor AI/texnologiya "
+        "va yirik brend/biznes yangiliklarini qoldir. Umuman aloqasiz "
+        "(masalan sport natijalari, siyosat) yangiliklarni chiqarib tashla.\n"
+        "2. Har biriga 1-10 ball ber, mezonlar:\n"
+        "   - Ta'sir doirasi (qancha odamga/bizneslarga tegishli)\n"
+        "   - Amaliylik (o'quvchi darhol foydalanadigan xulosa bormi)\n"
+        "   - Yangilik darajasi\n"
+        "   - Manba nufuzi\n"
+        "   - OMMABOPLIK: yangilik tor texnik qatlam uchun emas, keng auditoriya "
+        "(marketolog, tadbirkor, oddiy qiziquvchi) uchun ham QIZIQARLI va tushunarli "
+        "bo'lishi kerak. Juda tor, ichki-korporativ yoki faqat mutaxassislargagina "
+        "tushunarli mavzularga past ball ber.\n"
+        "   - O'zbekiston/MDH bozoriga aloqadorlik (bo'lsa qo'shimcha ball)\n"
         "3. Har biriga bitta kategoriya belgila: SMM, SEO, Reklama, Brending, "
         "Kontent marketing, Email marketing, E-commerce, AI marketing, PR, Analitika.\n"
         "4. Natijani ball bo'yicha KAMAYISH tartibida, FAQAT JSON array qaytar:\n"
