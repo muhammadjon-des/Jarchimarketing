@@ -30,7 +30,7 @@ MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
 AUTHOR_NAME = os.environ.get("AUTHOR_NAME", "Muhammadjon")
 
 HOURS_WINDOW = 30           # so'nggi necha soatlik maqolalarni ko'rib chiqamiz
-MAX_CANDIDATES_TO_AI = 40   # Claude'ga yuboriladigan maksimal maqolalar soni
+MAX_CANDIDATES_TO_AI = 25   # Claude'ga yuboriladigan maksimal maqolalar soni
 DUP_TITLE_THRESHOLD = 0.72  # sarlavha o'xshashligi bo'yicha dublikat chegarasi
 SENT_FILE = "sent.json"
 
@@ -203,11 +203,29 @@ def call_claude(prompt, max_tokens=4000):
 
 
 def extract_json(text, kind="["):
+    close = "]" if kind == "[" else "}"
     start = text.find(kind)
-    end = text.rfind("]" if kind == "[" else "}")
-    if start == -1 or end == -1:
+    if start == -1:
         raise RuntimeError("JSON topilmadi: " + text[:200])
-    return json.loads(text[start:end + 1])
+
+    end = text.rfind(close)
+    if end != -1:
+        try:
+            return json.loads(text[start:end + 1])
+        except json.JSONDecodeError:
+            pass  # javob kesilgan bo'lishi mumkin — pastda ta'mirlashga urinamiz
+
+    if kind != "[":
+        raise RuntimeError("JSON topilmadi/buzilgan: " + text[:200])
+
+    # Javob array ichida uzilib qolgan bo'lishi mumkin (max_tokens yetmagan).
+    # Oxirgi to'liq bitilgan elementgacha kesib, arrayni qo'lda yopamiz.
+    fragment = text[start:]
+    last_complete = fragment.rfind("},")
+    if last_complete == -1:
+        raise RuntimeError("JSON topilmadi/juda qisqa kesilgan: " + text[:200])
+    repaired = fragment[:last_complete + 1] + "]"
+    return json.loads(repaired)
 
 
 def rank_candidates(items):
@@ -225,10 +243,11 @@ def rank_candidates(items):
         "Kontent marketing, Email marketing, E-commerce, AI marketing, PR, Analitika.\n"
         "4. Natijani ball bo'yicha KAMAYISH tartibida, FAQAT JSON array qaytar:\n"
         '[{"i": raqam, "score": son, "category": "..."}]\n'
-        "Boshqa hech qanday matn yozma.\n\n"
+        "Boshqa hech qanday matn yozma. Javobni qisqa va ixcham JSON qilib yoz, "
+        "ortiqcha bo'sh joy yoki izoh qo'shma.\n\n"
         + listing
     )
-    text = call_claude(prompt, max_tokens=3000)
+    text = call_claude(prompt, max_tokens=8000)
     ranked = extract_json(text, "[")
     ranked.sort(key=lambda x: -x.get("score", 0))
     return ranked
