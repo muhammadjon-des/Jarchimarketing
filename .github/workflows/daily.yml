@@ -1,19 +1,38 @@
 name: Daily Marketing Bot
+
 on:
   schedule:
-    - cron: "0 4 * * *"
+    - cron: "0 4 * * *"   # 09:00 Toshkent
+    - cron: "0 8 * * *"   # 13:00 Toshkent
+    - cron: "0 15 * * *"  # 20:00 Toshkent
   workflow_dispatch:
+
+permissions:
+  contents: write
+
 jobs:
   post:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - run: pip install feedparser requests
+
       - run: python marketing_bot.py
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AUTHOR_NAME: "Muhammadjon"
+
+      - name: Save sent.json back to repo
+        run: |
+          git config user.name "marketing-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add sent.json
+          git diff --quiet --cached || git commit -m "Update sent.json [skip ci]"
+          git push
