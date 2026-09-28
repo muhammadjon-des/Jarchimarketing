@@ -1,0 +1,42 @@
+name: Marketing Pulse Dashboard
+
+on:
+  schedule:
+    - cron: "0 3 * * *"    # 08:00 Toshkent
+    - cron: "0 8 * * *"    # 13:00 Toshkent
+    - cron: "0 13 * * *"   # 18:00 Toshkent
+    - cron: "0 16 * * *"   # 21:00 Toshkent
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install feedparser requests
+
+      - run: python dashboard.py
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Save dashboard_state.json back to repo
+        run: |
+          git config user.name "marketing-bot"
+          git config user.email "actions@users.noreply.github.com"
+          if [ -f dashboard_state.json ]; then
+            git add dashboard_state.json
+            git diff --quiet --cached || git commit -m "Update dashboard_state.json [skip ci]"
+            git push
+          else
+            echo "dashboard_state.json topilmadi — o'tkazib yuborildi"
+          fi
