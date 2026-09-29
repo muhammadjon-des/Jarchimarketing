@@ -28,8 +28,8 @@ STATE_FILE = "dashboard_state.json"
 TASHKENT = ZoneInfo("Asia/Tashkent")
 
 CBU_URL = "https://cbu.uz/uz/arkhiv-kursov-valyut/json/"
-TRENDS_GLOBAL_RSS = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=US"
-TRENDS_UZ_RSS = "https://trends.google.com/trends/trendingsearches/daily/rss?geo=UZ"
+TRENDS_GLOBAL_RSS = "https://trends.google.com/trending/rss?geo=US"
+TRENDS_UZ_RSS = "https://trends.google.com/trending/rss?geo=UZ"
 
 CURRENCIES = ["USD", "RUB", "EUR", "CNY"]
 CCY_FLAG = {"USD": "🇺🇸", "RUB": "🇷🇺", "EUR": "🇪🇺", "CNY": "🇨🇳"}
@@ -81,7 +81,8 @@ def clean_text(text):
 
 
 def get_trends(url, limit=5):
-    parsed = feedparser.parse(url)
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; marketing-pulse-bot/1.0)"}
+    parsed = feedparser.parse(url, request_headers=headers)
     items = []
     for e in parsed.entries[:limit]:
         items.append({
