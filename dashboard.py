@@ -27,7 +27,16 @@ MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
 STATE_FILE = "dashboard_state.json"
 TASHKENT = ZoneInfo("Asia/Tashkent")
 
-CBU_URL = "https://cbu.uz/uz/arkhiv-kursov-valyut/json/"
+CBU_URLS = [
+    "https://cbu.uz/uz/arkhiv-kursov-valyut/json/",
+    "https://cbu.uz/ru/arkhiv-kursov-valyut/json/",
+    "https://cbu.uz/en/arkhiv-kursov-valyut/json/",
+]
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+}
 TRENDS_GLOBAL_RSS = "https://trends.google.com/trending/rss?geo=US"
 TRENDS_UZ_RSS = "https://trends.google.com/trending/rss?geo=UZ"
 
@@ -39,18 +48,29 @@ CCY_FLAG = {"USD": "🇺🇸", "RUB": "🇷🇺", "EUR": "🇪🇺", "CNY": "�
 # Valyuta kurslari — O'zbekiston Markaziy banki rasmiy API'si
 # ---------------------------------------------------------------------------
 def get_currency_rates():
-    r = requests.get(CBU_URL, timeout=30)
-    r.raise_for_status()
-    data = r.json()
+    last_error = None
+    for url in CBU_URLS:
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=30)
+            r.raise_for_status()
+            data = r.json()
 
-    rates = {}
-    for row in data:
-        ccy = row.get("Ccy")
-        if ccy in CURRENCIES:
-            rate = float(str(row.get("Rate", "0")).replace(",", ""))
-            diff = float(str(row.get("Diff", "0")).replace(",", ""))
-            rates[ccy] = {"rate": rate, "diff": diff}
-    return rates
+            rates = {}
+            for row in data:
+                ccy = row.get("Ccy")
+                if ccy in CURRENCIES:
+                    rate = float(str(row.get("Rate", "0")).replace(",", ""))
+                    diff = float(str(row.get("Diff", "0")).replace(",", ""))
+                    rates[ccy] = {"rate": rate, "diff": diff}
+
+            if rates:
+                return rates
+            last_error = RuntimeError(f"{url}: bo'sh javob qaytdi")
+        except Exception as ex:
+            last_error = ex
+            print(f"CBU xato ({url}):", ex)
+
+    raise last_error if last_error else RuntimeError("Valyuta kurslari olinmadi")
 
 
 def format_currency_block(rates):
