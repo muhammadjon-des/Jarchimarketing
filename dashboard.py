@@ -9,6 +9,7 @@ yuboradi. Yangi dashboard chiqqanda eski dashboard xabari o'chiriladi.
 
 Muhit o'zgaruvchilari:
   BOT_TOKEN, CHANNEL_ID, ANTHROPIC_API_KEY — asosiy botdagi bilan bir xil.
+  ALLRATES_API_KEY — allratestoday.com'dan bepul kalit (CBU kurslari uchun).
 """
 import os
 import re
@@ -22,21 +23,20 @@ from zoneinfo import ZoneInfo
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHANNEL_ID = os.environ["CHANNEL_ID"]
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
+ALLRATES_KEY = os.environ.get("ALLRATES_API_KEY")
 MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
 
 STATE_FILE = "dashboard_state.json"
 TASHKENT = ZoneInfo("Asia/Tashkent")
 
-CBU_URLS = [
-    "https://cbu.uz/uz/arkhiv-kursov-valyut/json/",
-    "https://cbu.uz/ru/arkhiv-kursov-valyut/json/",
-    "https://cbu.uz/en/arkhiv-kursov-valyut/json/",
-]
+ALLRATES_URL = "https://allratestoday.com/api/v1/central-bank/cbu/latest"
+CBU_DIRECT_URL = "https://cbu.uz/uz/arkhiv-kursov-valyut/json/"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json",
 }
+
 TRENDS_GLOBAL_RSS = "https://trends.google.com/trending/rss?geo=US"
 TRENDS_UZ_RSS = "https://trends.google.com/trending/rss?geo=UZ"
 
@@ -45,34 +45,106 @@ CCY_FLAG = {"USD": "🇺🇸", "RUB": "🇷🇺", "EUR": "🇪🇺", "CNY": "�
 
 
 # ---------------------------------------------------------------------------
-# Valyuta kurslari — O'zbekiston Markaziy banki rasmiy API'si
+# Valyuta kurslari — O'zbekiston Markaziy banki rasmiy kurslari
 # ---------------------------------------------------------------------------
-def get_currency_rates():
-    last_error = None
-    for url in CBU_URLS:
+def _to_float(value):
+    try:
+        return float(str(value).replace(" ", "").replace(",", ""))
+    except Exception:
+        return None
+
+
+def parse_rates_payload(data):
+    """Turli JSON ko'rinishlarini {valyuta: kurs} ga aylantiradi."""
+    rate_date = None
+    rows = data
+    if isinstance(data, dict):
+        rate_date = data.get("rate_date") or data.get("date")
+        rows = data
+        for key in ("data", "rates", "table"):
+            if isinstance(rows, dict) and key in rows:
+                inner = rows[key]
+                if isinstance(inner, dict) and not rate_date:
+                    rate_date = inner.get("rate_date") or inner.get("date")
+                rows = inner
+
+    out = {}
+    if isinstance(rows, dict):
+        for code, val in rows.items():
+            if code in CURRENCIES:
+                num = val.get("rate") if isinstance(val, dict) else val
+                num = _to_float(num)
+                if num:
+                    out[code] = num
+    elif isinstance(rows, list):
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            code = (row.get("code") or row.get("source") or row.get("currency")
+                    or row.get("Ccy"))
+            if code in CURRENCIES:
+                num = _to_float(row.get("rate") or row.get("value") or row.get("Rate"))
+                if num:
+                    out[code] = num
+    return out, rate_date
+
+
+def fetch_rates_allrates():
+    if not ALLRATES_KEY:
+        raise RuntimeError("ALLRATES_API_KEY o'rnatilmagan")
+    r = requests.get(
+        ALLRATES_URL,
+        headers={**HEADERS, "Authorization": f"Bearer {ALLRATES_KEY}"},
+        timeout=30,
+    )
+    print(f"AllRates javob: status {r.status_code}, boshi: {r.text[:300]!r}")
+    r.raise_for_status()
+    rates, rate_date = parse_rates_payload(r.json())
+    if not rates:
+        raise RuntimeError("AllRates javobidan kurslar ajratib olinmadi")
+    return rates, rate_date
+
+
+def fetch_rates_cbu_direct():
+    r = requests.get(CBU_DIRECT_URL, headers=HEADERS, timeout=8)
+    r.raise_for_status()
+    rates, rate_date = parse_rates_payload(r.json())
+    if not rates:
+        raise RuntimeError("CBU javobi bo'sh")
+    return rates, rate_date
+
+
+def get_currency_rates(state):
+    """Kurslarni oladi, oldingi qiymat bilan solishtirib 'diff' hisoblaydi."""
+    fresh, rate_date, error = None, None, None
+    for fetcher in (fetch_rates_allrates, fetch_rates_cbu_direct):
         try:
-            r = requests.get(url, headers=HEADERS, timeout=30)
-            print(f"CBU javob: {url} -> status {r.status_code}, "
-                  f"turi {r.headers.get('Content-Type')}, boshi: {r.text[:150]!r}")
-            r.raise_for_status()
-            data = r.json()
-
-            rates = {}
-            for row in data:
-                ccy = row.get("Ccy")
-                if ccy in CURRENCIES:
-                    rate = float(str(row.get("Rate", "0")).replace(",", ""))
-                    diff = float(str(row.get("Diff", "0")).replace(",", ""))
-                    rates[ccy] = {"rate": rate, "diff": diff}
-
-            if rates:
-                return rates
-            last_error = RuntimeError(f"{url}: bo'sh javob qaytdi")
+            fresh, rate_date = fetcher()
+            break
         except Exception as ex:
-            last_error = ex
-            print(f"CBU xato ({url}):", ex)
+            error = ex
+            print(f"{fetcher.__name__} xato:", ex)
 
-    raise last_error if last_error else RuntimeError("Valyuta kurslari olinmadi")
+    if fresh is None:
+        # Yangi ma'lumot olinmadi — oxirgi saqlangan kurslardan foydalanamiz (bo'lsa)
+        cached = state.get("rates")
+        if cached:
+            print("Yangi kurs olinmadi, saqlangan kurslar ishlatiladi")
+            prev = state.get("prev_rates", {})
+            return {c: {"rate": v, "diff": v - prev.get(c, v)} for c, v in cached.items()}
+        raise error or RuntimeError("Valyuta kurslari olinmadi")
+
+    rate_date = rate_date or datetime.now(TASHKENT).strftime("%Y-%m-%d")
+    if rate_date != state.get("rates_date"):
+        state["prev_rates"] = state.get("rates", {})
+        state["rates_date"] = rate_date
+    state["rates"] = fresh
+
+    prev = state.get("prev_rates", {})
+    return {
+        c: {"rate": v, "diff": (v - prev[c]) if c in prev else 0.0}
+        for c, v in fresh.items()
+    }
 
 
 def format_currency_block(rates):
@@ -103,8 +175,7 @@ def clean_text(text):
 
 
 def get_trends(url, limit=5):
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; marketing-pulse-bot/1.0)"}
-    parsed = feedparser.parse(url, request_headers=headers)
+    parsed = feedparser.parse(url, request_headers=HEADERS)
     items = []
     for e in parsed.entries[:limit]:
         items.append({
@@ -145,7 +216,8 @@ def add_short_comments(trend_items):
             },
             timeout=60,
         )
-        r.raise_for_status()
+        if r.status_code != 200:
+            raise RuntimeError(f"API {r.status_code}: {r.text[:400]}")
         blocks = r.json().get("content", [])
         text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
         start, end = text.find("["), text.rfind("]")
@@ -231,8 +303,10 @@ def main():
         f"🕐 {now.strftime('%d-%B, %Y')} | {now.strftime('%H:%M')} (Toshkent vaqti)"
     )
 
+    state = load_state()
+
     try:
-        rates = get_currency_rates()
+        rates = get_currency_rates(state)
         currency_block = format_currency_block(rates)
     except Exception as ex:
         print("Valyuta kurslarini olishda xato:", ex)
@@ -260,11 +334,12 @@ def main():
 
     message = "\n\n".join(parts)
 
-    state = load_state()
     delete_old_message(state)
 
     new_id = send_dashboard(message)
-    save_state({"message_id": new_id, "chat_id": CHANNEL_ID})
+    state["message_id"] = new_id
+    state["chat_id"] = CHANNEL_ID
+    save_state(state)
     print("Dashboard yuborildi, message_id:", new_id)
 
 
