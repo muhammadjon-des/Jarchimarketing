@@ -80,10 +80,16 @@ def parse_rates_payload(data):
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            code = (row.get("code") or row.get("source") or row.get("currency")
-                    or row.get("Ccy"))
+            quote = row.get("quote") or row.get("target")
+            if quote and quote != "UZS":
+                continue
+            code = (row.get("currency") or row.get("code") or row.get("Ccy")
+                    or row.get("char_code") or row.get("source") or row.get("base"))
             if code in CURRENCIES:
-                num = _to_float(row.get("rate") or row.get("value") or row.get("Rate"))
+                num = _to_float(
+                    row.get("value") or row.get("rate") or row.get("Rate")
+                    or row.get("uzs_per_unit")
+                )
                 if num:
                     out[code] = num
     return out, rate_date
@@ -105,6 +111,23 @@ def fetch_rates_allrates():
     return rates, rate_date
 
 
+def fetch_rates_oanor():
+    key = os.environ.get("OANOR_API_KEY")
+    if not key:
+        raise RuntimeError("OANOR_API_KEY o'rnatilmagan")
+    r = requests.get(
+        "https://api.oanor.com/cbu-api/v1/rates",
+        headers={**HEADERS, "x-oanor-key": key},
+        timeout=30,
+    )
+    print(f"Oanor javob: status {r.status_code}, boshi: {r.text[:300]!r}")
+    r.raise_for_status()
+    rates, rate_date = parse_rates_payload(r.json())
+    if not rates:
+        raise RuntimeError("Oanor javobidan kurslar ajratib olinmadi")
+    return rates, rate_date
+
+
 def fetch_rates_cbu_direct():
     r = requests.get(CBU_DIRECT_URL, headers=HEADERS, timeout=8)
     r.raise_for_status()
@@ -115,39 +138,43 @@ def fetch_rates_cbu_direct():
 
 
 def get_currency_rates(state):
-    """Kurslarni oladi, oldingi qiymat bilan solishtirib 'diff' hisoblaydi."""
-    fresh, rate_date, error = None, None, None
-    for fetcher in (fetch_rates_allrates, fetch_rates_cbu_direct):
+    """Barcha manbalarni sinab, eng yangi sanali kursni tanlaydi.
+    Qaytaradi: ({valyuta: {rate, diff}}, kurs_sanasi)."""
+    candidates, error = [], None
+    for fetcher in (fetch_rates_allrates, fetch_rates_oanor, fetch_rates_cbu_direct):
         try:
-            fresh, rate_date = fetcher()
-            break
+            rates, rate_date = fetcher()
+            candidates.append((rate_date or "", rates))
         except Exception as ex:
             error = ex
             print(f"{fetcher.__name__} xato:", ex)
 
-    if fresh is None:
-        # Yangi ma'lumot olinmadi — oxirgi saqlangan kurslardan foydalanamiz (bo'lsa)
+    if not candidates:
         cached = state.get("rates")
         if cached:
             print("Yangi kurs olinmadi, saqlangan kurslar ishlatiladi")
             prev = state.get("prev_rates", {})
-            return {c: {"rate": v, "diff": v - prev.get(c, v)} for c, v in cached.items()}
+            data = {c: {"rate": v, "diff": v - prev.get(c, v)} for c, v in cached.items()}
+            return data, state.get("rates_date")
         raise error or RuntimeError("Valyuta kurslari olinmadi")
 
+    rate_date, fresh = max(candidates, key=lambda x: x[0])
     rate_date = rate_date or datetime.now(TASHKENT).strftime("%Y-%m-%d")
+
     if rate_date != state.get("rates_date"):
         state["prev_rates"] = state.get("rates", {})
         state["rates_date"] = rate_date
     state["rates"] = fresh
 
     prev = state.get("prev_rates", {})
-    return {
+    data = {
         c: {"rate": v, "diff": (v - prev[c]) if c in prev else 0.0}
         for c, v in fresh.items()
     }
+    return data, rate_date
 
 
-def format_currency_block(rates):
+def format_currency_block(rates, rate_date=None):
     lines = ["💱 <b>Valyuta kurslari</b> <i>(O'zbekiston Markaziy banki)</i>"]
     for ccy in CURRENCIES:
         info = rates.get(ccy)
@@ -162,6 +189,14 @@ def format_currency_block(rates):
         lines.append(
             f"{CCY_FLAG[ccy]} {ccy} → {info['rate']:,.2f} so'm {arrow}".replace(",", " ")
         )
+    if rate_date:
+        try:
+            age = (datetime.now(TASHKENT).date()
+                   - datetime.strptime(rate_date, "%Y-%m-%d").date()).days
+        except ValueError:
+            age = 0
+        if age > 2:
+            lines.append(f"<i>⚠️ Kurs sanasi: {rate_date}</i>")
     return "\n".join(lines)
 
 
@@ -306,8 +341,8 @@ def main():
     state = load_state()
 
     try:
-        rates = get_currency_rates(state)
-        currency_block = format_currency_block(rates)
+        rates, rate_date = get_currency_rates(state)
+        currency_block = format_currency_block(rates, rate_date)
     except Exception as ex:
         print("Valyuta kurslarini olishda xato:", ex)
         currency_block = "💱 <b>Valyuta kurslari</b> — vaqtincha mavjud emas"
