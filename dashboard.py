@@ -52,6 +52,8 @@ def get_currency_rates():
     for url in CBU_URLS:
         try:
             r = requests.get(url, headers=HEADERS, timeout=30)
+            print(f"CBU javob: {url} -> status {r.status_code}, "
+                  f"turi {r.headers.get('Content-Type')}, boshi: {r.text[:150]!r}")
             r.raise_for_status()
             data = r.json()
 
